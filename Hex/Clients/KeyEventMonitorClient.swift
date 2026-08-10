@@ -46,7 +46,7 @@ public extension KeyEvent {
     if !isFnPressed {
       modifiers = modifiers.removing(kind: .fn)
     }
-    self.init(key: key, modifiers: modifiers)
+    self.init(key: key, modifiers: modifiers, isKeyUp: cgEvent.type == .keyUp)
   }
 }
 

@@ -540,8 +540,31 @@ struct HotKeyProcessorTests {
                 // Start recording
                 ScenarioStep(time: 0.0, key: nil, modifiers: [.option], expectedOutput: .startRecording, expectedIsMatched: true),
                 // Press ESC -> ignored, still recording
-                ScenarioStep(time: 0.5, key: .escape, modifiers: [], expectedOutput: nil, expectedIsMatched: true),
+                ScenarioStep(time: 0.5, key: .escape, modifiers: [.option], expectedOutput: nil, expectedIsMatched: true),
+                // ESC keyUp must not be misread as the hotkey release
+                ScenarioStep(time: 0.55, key: nil, modifiers: [.option], isKeyUp: true, expectedOutput: nil, expectedIsMatched: true),
                 // Release -> normal stop
+                ScenarioStep(time: 0.6, key: nil, modifiers: [], expectedOutput: .stopRecording, expectedIsMatched: false),
+            ]
+        )
+    }
+
+    // Tests that ESC with "ignore" behavior doesn't trip the phantom hotkey-release for
+    // key+modifier hotkeys either (the ESC keyUp carries key == nil and used to look like
+    // the hotkey key being released)
+    @Test
+    func escape_ignoreBehavior_doesNotStopRegularKeyHotkeyOnEscapeRelease() throws {
+        runScenario(
+            hotkey: HotKey(key: .a, modifiers: [.command]),
+            escapeKeyBehavior: .ignore,
+            steps: [
+                // Start recording
+                ScenarioStep(time: 0.0, key: .a, modifiers: [.command], expectedOutput: .startRecording, expectedIsMatched: true),
+                // Press ESC -> ignored, still recording
+                ScenarioStep(time: 0.5, key: .escape, modifiers: [.command], expectedOutput: nil, expectedIsMatched: true),
+                // ESC keyUp must be dropped, not treated as the hotkey key release
+                ScenarioStep(time: 0.55, key: nil, modifiers: [.command], isKeyUp: true, expectedOutput: nil, expectedIsMatched: true),
+                // Real release -> normal stop
                 ScenarioStep(time: 0.6, key: nil, modifiers: [], expectedOutput: .stopRecording, expectedIsMatched: false),
             ]
         )
@@ -563,6 +586,8 @@ struct HotKeyProcessorTests {
                 ScenarioStep(time: 0.3, key: nil, modifiers: [], expectedOutput: nil, expectedIsMatched: true),
                 // Now locked - press ESC -> ignored, still locked
                 ScenarioStep(time: 1.0, key: .escape, modifiers: [], expectedOutput: nil, expectedIsMatched: true),
+                // ESC keyUp must be dropped, not eaten as the "hotkey tap" that would stop the lock
+                ScenarioStep(time: 1.05, key: nil, modifiers: [], isKeyUp: true, expectedOutput: nil, expectedIsMatched: true),
                 // Tap hotkey again -> normal stop
                 ScenarioStep(time: 1.1, key: nil, modifiers: [.option], expectedOutput: .stopRecording, expectedIsMatched: false),
             ]
@@ -662,6 +687,9 @@ struct ScenarioStep {
     /// Which modifiers are held in this chord
     let modifiers: Modifiers
 
+    /// True if this step models a keyUp event (key == nil, but distinguishable from flagsChanged)
+    let isKeyUp: Bool
+
     /// The expected output from `processor.process(...)` at this step,
     /// or `nil` if we expect no output.
     let expectedOutput: HotKeyProcessor.Output?
@@ -677,6 +705,7 @@ struct ScenarioStep {
         time: TimeInterval,
         key: Key? = nil,
         modifiers: Modifiers = [],
+        isKeyUp: Bool = false,
         expectedOutput: HotKeyProcessor.Output? = nil,
         expectedIsMatched: Bool? = nil,
         expectedState: HotKeyProcessor.State? = nil
@@ -684,6 +713,7 @@ struct ScenarioStep {
         self.time = time
         self.key = key
         self.modifiers = modifiers
+        self.isKeyUp = isKeyUp
         self.expectedOutput = expectedOutput
         self.expectedIsMatched = expectedIsMatched
         self.expectedState = expectedState
@@ -724,7 +754,7 @@ func runScenario(
             $0.date.now = Date(timeIntervalSince1970: currentTime)
         } operation: {
             // Build a KeyEvent from step's chord
-            let keyEvent = KeyEvent(key: step.key, modifiers: step.modifiers)
+            let keyEvent = KeyEvent(key: step.key, modifiers: step.modifiers, isKeyUp: step.isKeyUp)
 
             // Process
             let actualOutput = processor.process(keyEvent: keyEvent)

@@ -129,6 +129,10 @@ public struct HotKeyProcessor {
     /// Prevents accidental re-triggering after cancellation or during complex key combos
     private var isDirty: Bool = false
 
+    /// In `.ignore` ESC mode, an ignored ESC press leaves its keyUp (which carries `key == nil`)
+    /// to be misread as the hotkey being released. This flag swallows exactly that one keyUp.
+    private var pendingIgnoredEscapeUp: Bool = false
+
     // MARK: - Timing Thresholds
     
     /// Maximum time between two taps to be considered a double-tap (0.3 seconds)
@@ -184,6 +188,16 @@ public struct HotKeyProcessor {
     /// 3. Matching chord → handle as hotkey press
     /// 4. Non-matching chord → handle as release or different key
     public mutating func process(keyEvent: KeyEvent) -> Output? {
+        // 0) In Ignore mode, drop the keyUp that follows an ignored ESC press. Without this the
+        //    keyUp (which carries key == nil) would be misread as the hotkey being released.
+        if pendingIgnoredEscapeUp {
+            if keyEvent.isKeyUp {
+                pendingIgnoredEscapeUp = false
+                return nil
+            }
+            // Non-keyUp events (e.g., modifier flagsChanged) keep the pending state.
+        }
+
         // 1) ESC while recording => cancel/transcribe or ignore depending on the setting
         if keyEvent.key == .escape, state != .idle {
             // The logger uses an escaping autoclosure, so copies of the mutating
@@ -194,6 +208,7 @@ public struct HotKeyProcessor {
             switch escapeKeyBehavior {
             case .ignore:
                 // ESC is disabled during recording: keep recording and let the key pass through.
+                pendingIgnoredEscapeUp = true
                 return nil
             case .cancel, .transcribe:
                 isDirty = true

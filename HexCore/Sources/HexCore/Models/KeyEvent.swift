@@ -15,9 +15,13 @@ public enum InputEvent {
 public struct KeyEvent {
     public let key: Key?
     public let modifiers: Modifiers
-    
-    public init(key: Key?, modifiers: Modifiers) {
+    /// True when the underlying event is a key-up. Key-up events carry `key == nil`,
+    /// so this is the only way to tell them apart from a modifier (flagsChanged) event.
+    public let isKeyUp: Bool
+
+    public init(key: Key?, modifiers: Modifiers, isKeyUp: Bool = false) {
         self.key = key
         self.modifiers = modifiers
+        self.isKeyUp = isKeyUp
     }
 }
