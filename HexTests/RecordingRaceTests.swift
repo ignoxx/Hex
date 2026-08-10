@@ -275,6 +275,172 @@ final class RecordingRaceTests: XCTestCase {
     XCTAssertEqual(storedDuration, duration)
   }
 
+  // MARK: - Escape "Transcribe" behavior
+
+  func testEscapeTranscribeHistoryEnabledSavesOnceAndDoesNotPaste() async throws {
+    let now = Date(timeIntervalSince1970: 1_234)
+    let stopURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("esc-transcribe-history-\(UUID().uuidString).wav")
+    XCTAssertTrue(FileManager.default.createFile(atPath: stopURL.path, contents: Data("test".utf8)))
+    defer { try? FileManager.default.removeItem(at: stopURL) }
+
+    let transcript = Transcript(
+      timestamp: now,
+      text: "hello",
+      audioPath: stopURL,
+      duration: 1.0,
+      sourceAppBundleID: nil,
+      sourceAppName: nil
+    )
+
+    var state = Self.makeState()
+    state.isRecording = true
+    state.recordingStartTime = now.addingTimeInterval(-1)
+    state.$hexSettings.withLock {
+      $0.hotkey = HotKey(key: .a, modifiers: [.command])
+      $0.escapeKeyBehavior = .transcribe
+    }
+
+    let probe = EscapeBehaviorProbe()
+    let store = TestStore(initialState: state) {
+      TranscriptionFeature()
+    } withDependencies: {
+      $0.date.now = now
+      $0.recording.stopRecording = { .captured(stopURL) }
+      $0.sleepManagement.allowSleep = {}
+      $0.transcription.transcribe = { _, _, _, _ in "hello" }
+      $0.transcriptPersistence.save = { _, _, _, _, _ in
+        await probe.recordSave()
+        return transcript
+      }
+      $0.pasteboard.paste = { _ in await probe.recordPaste() }
+      $0.soundEffects.play = { _ in }
+    }
+
+    await store.send(.escapeTranscribe) {
+      $0.isRecording = false
+      $0.isTranscribing = true
+      $0.isPrewarming = true
+    }
+    await store.receive(\.transcriptionResultWithoutPaste) {
+      $0.isTranscribing = false
+      $0.isPrewarming = false
+      $0.$transcriptionHistory.withLock { $0.history = [transcript] }
+    }
+    await store.finish()
+
+    let counts = await probe.counts()
+    XCTAssertEqual(counts.saveCalls, 1, "Transcribe should save the transcript to history")
+    XCTAssertEqual(counts.pasteCalls, 0, "Transcribe should not paste")
+  }
+
+  func testEscapeTranscribeHistoryDisabledFallsBackToPaste() async throws {
+    let now = Date(timeIntervalSince1970: 1_234)
+    let stopURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("esc-transcribe-no-history-\(UUID().uuidString).wav")
+    XCTAssertTrue(FileManager.default.createFile(atPath: stopURL.path, contents: Data("test".utf8)))
+    defer { try? FileManager.default.removeItem(at: stopURL) }
+
+    var state = Self.makeState()
+    state.isRecording = true
+    state.recordingStartTime = now.addingTimeInterval(-1)
+    state.$hexSettings.withLock {
+      $0.hotkey = HotKey(key: .a, modifiers: [.command])
+      $0.escapeKeyBehavior = .transcribe
+      $0.saveTranscriptionHistory = false
+    }
+
+    let probe = EscapeBehaviorProbe()
+    let store = TestStore(initialState: state) {
+      TranscriptionFeature()
+    } withDependencies: {
+      $0.date.now = now
+      $0.recording.stopRecording = { .captured(stopURL) }
+      $0.sleepManagement.allowSleep = {}
+      $0.transcription.transcribe = { _, _, _, _ in "hello" }
+      $0.transcriptPersistence.save = { _, _, _, _, _ in
+        await probe.recordSave()
+        throw NSError(domain: "should-not-save", code: 0)
+      }
+      $0.pasteboard.paste = { _ in await probe.recordPaste() }
+      $0.soundEffects.play = { _ in }
+    }
+
+    await store.send(.escapeTranscribe) {
+      $0.isRecording = false
+      $0.isTranscribing = true
+      $0.isPrewarming = true
+    }
+    await store.receive(\.transcriptionResultWithoutPaste) {
+      $0.isTranscribing = false
+      $0.isPrewarming = false
+    }
+    await store.finish()
+
+    let counts = await probe.counts()
+    XCTAssertEqual(counts.saveCalls, 0, "History is disabled: Transcribe must not save")
+    XCTAssertEqual(counts.pasteCalls, 1, "History is disabled: Transcribe must fall back to pasting so the take isn't lost")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: stopURL.path), "Audio is not retained when history is disabled")
+  }
+
+  func testEscapeTranscribeBelowThresholdIsDiscarded() async throws {
+    let now = Date(timeIntervalSince1970: 1_234)
+    let stopURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("esc-transcribe-short-\(UUID().uuidString).wav")
+    XCTAssertTrue(FileManager.default.createFile(atPath: stopURL.path, contents: Data("test".utf8)))
+    defer { try? FileManager.default.removeItem(at: stopURL) }
+
+    var state = Self.makeState()
+    state.isRecording = true
+    state.recordingStartTime = now // 0s duration -> below the 0.3s modifier-only threshold
+    state.$hexSettings.withLock {
+      $0.hotkey = HotKey(key: nil, modifiers: [.option])
+      $0.escapeKeyBehavior = .transcribe
+    }
+
+    let probe = EscapeBehaviorProbe()
+    let store = TestStore(initialState: state) {
+      TranscriptionFeature()
+    } withDependencies: {
+      $0.date.now = now
+      $0.recording.stopRecording = { .captured(stopURL) }
+      $0.sleepManagement.allowSleep = {}
+      $0.transcription.transcribe = { _, _, _, _ in "hello" }
+      $0.transcriptPersistence.save = { _, _, _, _, _ in
+        await probe.recordSave()
+        throw NSError(domain: "should-not-save", code: 0)
+      }
+      $0.pasteboard.paste = { _ in await probe.recordPaste() }
+      $0.soundEffects.play = { _ in }
+    }
+
+    await store.send(.escapeTranscribe) {
+      $0.isRecording = false
+      $0.isPrewarming = false
+    }
+    await store.finish()
+
+    let counts = await probe.counts()
+    XCTAssertEqual(counts.saveCalls, 0, "Sub-threshold ESC-take is treated as accidental and discarded")
+    XCTAssertEqual(counts.pasteCalls, 0)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: stopURL.path))
+  }
+
+  func testEscapeTranscribeIsNoOpWhileAlreadyTranscribing() async {
+    var state = Self.makeState()
+    state.isRecording = false
+    state.isTranscribing = true
+
+    let store = TestStore(initialState: state) {
+      TranscriptionFeature()
+    } withDependencies: {
+      $0.soundEffects.play = { _ in }
+    }
+
+    await store.send(.escapeTranscribe)
+    await store.finish()
+  }
+
   private static func makeState() -> TranscriptionFeature.State {
     TranscriptionFeature.State(
       hexSettings: Shared(value: .init()),
@@ -370,5 +536,22 @@ private actor TranscriptPersistenceProbe {
 
   func record(duration: TimeInterval) {
     self.duration = duration
+  }
+}
+
+private actor EscapeBehaviorProbe {
+  private(set) var saveCalls = 0
+  private(set) var pasteCalls = 0
+
+  func recordSave() {
+    saveCalls += 1
+  }
+
+  func recordPaste() {
+    pasteCalls += 1
+  }
+
+  func counts() -> (saveCalls: Int, pasteCalls: Int) {
+    (saveCalls, pasteCalls)
   }
 }

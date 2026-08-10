@@ -526,6 +526,8 @@ private extension TranscriptionFeature {
     let sourceAppBundleID = state.sourceAppBundleID
     let sourceAppName = state.sourceAppName
     let transcriptionHistory = state.$transcriptionHistory
+    let saveTranscriptionHistory = state.hexSettings.saveTranscriptionHistory
+    let maxHistoryEntries = state.hexSettings.maxHistoryEntries
 
     return .run { send in
       do {
@@ -536,7 +538,9 @@ private extension TranscriptionFeature {
           sourceAppName: sourceAppName,
           audioURL: audioURL,
           transcriptionHistory: transcriptionHistory,
-          shouldPaste: shouldPaste
+          shouldPaste: shouldPaste,
+          saveTranscriptionHistory: saveTranscriptionHistory,
+          maxHistoryEntries: maxHistoryEntries
         )
       } catch {
         await send(.transcriptionError(error, audioURL))
@@ -569,11 +573,11 @@ private extension TranscriptionFeature {
     sourceAppName: String?,
     audioURL: URL,
     transcriptionHistory: Shared<TranscriptionHistory>,
-    shouldPaste: Bool
+    shouldPaste: Bool,
+    saveTranscriptionHistory: Bool,
+    maxHistoryEntries: Int?
   ) async throws {
-    @Shared(.hexSettings) var hexSettings: HexSettings
-
-    if hexSettings.saveTranscriptionHistory {
+    if saveTranscriptionHistory {
       let transcript = try await transcriptPersistence.save(
         result,
         audioURL,
@@ -585,7 +589,7 @@ private extension TranscriptionFeature {
       transcriptionHistory.withLock { history in
         history.history.insert(transcript, at: 0)
 
-        if let maxEntries = hexSettings.maxHistoryEntries, maxEntries > 0 {
+        if let maxEntries = maxHistoryEntries, maxEntries > 0 {
           while history.history.count > maxEntries {
             if let removedTranscript = history.history.popLast() {
               Task {
@@ -599,10 +603,14 @@ private extension TranscriptionFeature {
       FileManager.default.removeItemIfExists(at: audioURL)
     }
 
-    if shouldPaste {
+    // With history enabled, a no-paste transcript lives in history and is recovered via the
+    // paste-last hotkey. If history is disabled there is nowhere to keep it, so fall back to
+    // pasting — otherwise the take would be silently lost.
+    let willPaste = shouldPaste || !saveTranscriptionHistory
+    if willPaste {
       await pasteboard.paste(result)
+      soundEffect.play(.pasteTranscript)
     }
-    soundEffect.play(.pasteTranscript)
   }
 }
 
