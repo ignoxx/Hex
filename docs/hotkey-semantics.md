@@ -322,6 +322,7 @@ Now recording is locked on:
   - Stop recording
   - Discard audio
   - Play cancel sound
+  - Note: In **Transcribe** mode the processor still emits `.cancel`, but the feature routes it to stop-and-transcribe instead (no cancel sound). See [ESC Key Handling](#esc-key-handling-configurable).
 
 ---
 
@@ -391,7 +392,10 @@ User: Hold Option (0.1s) → Add Shift → Release Shift → Press Option again
 **Processing order:**
 
 1. **Is ESC pressed?**
-   - YES → CANCEL (exit)
+   - YES → depends on "Escape during recording" setting (see [ESC Key Handling](#esc-key-handling-configurable)):
+     - **Cancel** (default): CANCEL (exit)
+     - **Transcribe**: stop, transcribe, save (no auto-paste)
+     - **Ignore**: ignored, recording continues (exit)
 
 2. **Are we dirty?**
    - YES → Ignore input (unless full release)
@@ -443,7 +447,8 @@ User: Hold Option (0.1s) → Add Shift → Release Shift → Press Option again
     - If ≥ 0.3s → (ignore, keep recording)
 
 - **LOCK** (hands-free recording)
-  - Transition: Tap hotkey again OR press ESC → STOP → IDLE
+  - Transition: Tap hotkey again → STOP → IDLE
+  - ESC → per "Escape during recording" setting: **Cancel** discards, **Transcribe** stops & transcribes, **Ignore** does nothing (see [ESC Key Handling](#esc-key-handling-configurable))
 
 ---
 

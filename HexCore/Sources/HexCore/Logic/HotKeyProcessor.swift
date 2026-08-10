@@ -186,6 +186,8 @@ public struct HotKeyProcessor {
     public mutating func process(keyEvent: KeyEvent) -> Output? {
         // 1) ESC while recording => cancel/transcribe or ignore depending on the setting
         if keyEvent.key == .escape, state != .idle {
+            // The logger uses an escaping autoclosure, so copies of the mutating
+            // `state` and `escapeKeyBehavior` are required for the interpolation.
             let currentState = state
             let currentBehavior = escapeKeyBehavior
             hotKeyLogger.notice("ESC pressed while state=\(String(describing: currentState)) escapeKeyBehavior=\(String(describing: currentBehavior))")
